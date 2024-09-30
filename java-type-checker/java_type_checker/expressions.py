@@ -39,6 +39,12 @@ class JavaVariable(JavaExpression):
         self.name = name                    #: The name of the variable (str)
         self.declared_type = declared_type  #: The declared type of the variable (JavaType)
 
+    def static_type(self):
+        return self.declared_type
+    
+    def check_types(self):
+        return
+
 
 class JavaLiteral(JavaExpression):
     """A literal value entered in the code, e.g. `5` in the expression `x + 5`.
@@ -46,6 +52,12 @@ class JavaLiteral(JavaExpression):
     def __init__(self, value, type):
         self.value = value  #: The literal value, as a string
         self.type = type    #: The type of the literal (JavaType)
+    
+    def static_type(self):
+        return self.type
+
+    def check_types(self):
+        return
 
 
 class JavaNullLiteral(JavaLiteral):
@@ -65,6 +77,22 @@ class JavaAssignment(JavaExpression):
     def __init__(self, lhs, rhs):
         self.lhs = lhs
         self.rhs = rhs
+    
+    def static_type(self):
+        return self.lhs.static_type()
+    
+    def check_types(self):
+        self.rhs.check_types()
+        self.lhs.check_types()
+        if self.rhs.static_type().is_subtype_of(self.lhs.static_type()):
+            return
+        raise JavaTypeMismatchError(
+            "Cannot assign {0} to variable {1} of type {2}".format(
+            self.rhs.static_type().name,
+            self.lhs.name,
+            self.lhs.static_type().name
+        ))
+        
 
 
 class JavaMethodCall(JavaExpression):
@@ -88,6 +116,38 @@ class JavaMethodCall(JavaExpression):
         self.method_name = method_name
         self.args = args
 
+    def static_type(self):
+        return self.receiver.static_type().method_named(self.method_name).return_type
+    
+    def check_types(self):
+        for x in self.args:
+            x.check_types()
+
+        self.receiver.check_types()
+
+        methodArgs = self.receiver.static_type().method_named(self.method_name).parameter_types
+        argTypes = list(map(lambda x: x.static_type(), self.args))
+
+        if(len(self.args) != len(methodArgs)):
+            raise JavaArgumentCountError(
+                "Wrong number of arguments for {0}.{1}(): expected {2}, got {3}".format(
+                self.receiver.static_type().name,
+                self.method_name,
+                len(methodArgs),
+                len(self.args)))
+        
+        for x in range(len(self.args)):
+            if not argTypes[x].is_subtype_of(methodArgs[x]):
+                raise JavaTypeMismatchError(
+                    "{0}.{1}() expects arguments of type {2}, but got {3}".format(
+                    self.receiver.static_type().name,
+                    self.method_name,
+                    _names(methodArgs),
+                    _names(argTypes)))
+        return
+
+    
+
 
 class JavaConstructorCall(JavaExpression):
     """
@@ -107,6 +167,31 @@ class JavaConstructorCall(JavaExpression):
     def __init__(self, instantiated_type, *args):
         self.instantiated_type = instantiated_type
         self.args = args
+    
+    def static_type(self):
+        return self.instantiated_type
+    
+    def check_types(self):
+        if not self.instantiated_type.is_instantiable:
+            raise JavaIllegalInstantiationError("Type {0} is not instantiable".format(self.instantiated_type.name))
+        
+        argTypes = list(map(lambda x: x.static_type(), self.args))
+        classArgs = self.instantiated_type.constructor.parameter_types
+
+        if(len(argTypes) != len(classArgs)):
+            raise JavaArgumentCountError(
+                "Wrong number of arguments for {0} constructor: expected {1}, got {2}".format(
+                self.instantiated_type.name,
+                len(classArgs),
+                len(argTypes)))
+        for x in range(len(argTypes)):
+            if not argTypes[x].is_subtype_of(classArgs[x]):
+                raise JavaTypeMismatchError(
+                    "{0} constructor expects arguments of type {1}, but got {2}".format(
+                    self.instantiated_type.name,
+                    _names(classArgs),
+                    _names(argTypes)))
+        return
 
 
 class JavaTypeMismatchError(JavaTypeError):
